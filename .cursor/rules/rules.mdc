@@ -1,0 +1,839 @@
+---
+description:
+globs:
+alwaysApply: true
+---
+
+
+Flutter视频编辑应用的开发思路，着重实现**画布裁剪（区域裁剪）**和**时间轴裁剪**这两个核心功能，并融合UI设计元素。
+
+### 重新规划后的核心功能与UI融合
+
+#### 1. 整体应用结构
+
+应用将包含两个主要功能页面：
+
+* **视频选择与预览页 (VideoPickerAndPreviewScreen):** 用户选择视频后，进入该页面进行初步预览，并选择进入“时间轴裁剪”或“画布裁剪”。
+* **视频编辑页 (VideoEditorScreen):** 负责具体的裁剪操作，根据用户选择的功能（时间轴或画布）显示不同的UI和逻辑。
+
+#### 2. 视频选择与预览
+
+* **UI参考：** 第二张图的顶部区域（视频播放器）。
+* **实现思路：**
+  * 使用 `file_picker` 选择视频文件。
+  * 使用 `video_player` 或 `flick_video_player` 在顶部区域显示视频预览。
+  * 在底部提供按钮，让用户选择进入“时间轴裁剪”或“画布裁剪”。
+
+#### 3. 时间轴裁剪 (UI参考第二张图的底部时间轴)
+
+* **功能描述:** 用户可以通过拖动时间轴上的起始和结束标记来选择视频的片段进行裁剪。
+* **UI元素:**
+  * **视频缩略图序列:** 底部展示的视频帧序列。这需要FFmpeg从视频中提取关键帧或固定间隔的帧。
+  * **裁剪范围滑块:** 覆盖在缩略图序列上方的黄色滑块区域，用户可以拖动左右边缘来调整裁剪范围。
+  * **当前时间显示:** 在裁剪滑块上方显示当前选定的裁剪时长，例如 `01:59`。
+* **实现思路:**
+  * **缩略图生成:**
+    * 使用 `flutter_ffmpeg` 提取视频的帧作为缩略图。可以每隔N秒提取一帧，或者提取关键帧。
+    * 将这些帧保存为图片文件，并在`ListView.builder`中横向展示。
+  * **裁剪滑块:**
+    * 可以使用 `RangeSlider` 或自定义 `GestureDetector` 和 `Stack` 来创建拖动式滑块。
+    * 计算滑块在时间轴上的位置与视频时长的对应关系，从而确定 `_trimStart` 和 `_trimEnd`。
+  * **FFmpeg命令:**
+    * `ffmpeg -ss [起始时间] -to [结束时间] -i input.mp4 -c copy output.mp4`
+    * 强调 `-c copy` 以保持原画质和速度。
+
+#### 4. 画布裁剪 (区域裁剪) (UI参考第一张图)
+
+* **功能描述:** 用户可以在视频预览界面上拖动和调整一个矩形框，以选择视频帧中的特定区域进行裁剪。
+* **UI元素:**
+  * **视频预览:** 顶部显示视频播放器。
+  * **裁剪框:** 叠加在视频播放器上方的黄色矩形框，带有可拖动的边角和中心区域。
+  * **网格线:** 裁剪框内部的九宫格网格，用于辅助用户对齐。
+  * **操作按钮:** 在底部显示“旋转”和“裁剪”选项卡，以及“向右90°”和“镜像”按钮。对于这个应用，我们只关注“裁剪”选项卡下的功能。
+* **实现思路:**
+  * **视频预览:** 与时间轴裁剪页相同，使用 `video_player`。
+  * **裁剪框实现:**
+    * 使用 `Stack` 布局将视频播放器和裁剪框叠加。
+    * 裁剪框本身可以是一个自定义 `StatefulWidget`，内部包含 `GestureDetector` 用于处理拖动和缩放手势。
+    * 计算手势事件对应的 `_cropX`, `_cropY`, `_cropWidth`, `_cropHeight`。
+    * **绘制网格线:** 在裁剪框的 `CustomPaint` 中绘制九宫格线条。
+  * **FFmpeg命令:**
+    * `ffmpeg -i input.mp4 -vf "crop=w:h:x:y" -c:v libx264 -preset medium -crf 23 -c:a copy output.mp4`
+    * 强调区域裁剪通常需要重新编码，所以不能用 `-c copy`。需要设置视频编码器、预设和质量参数。
+  * **“旋转”和“镜像”：** 虽然您说只需要画布裁剪和视频裁剪，但设计图上明确显示了旋转和镜像功能。如果需要实现，FFmpeg也有对应的滤镜（如 `transpose` 和 `hflip`/`vflip`）。
+
+### 详细代码结构和组件
+
+#### 1. `main.dart` 或 `app.dart`
+
+```dart
+import 'package:flutter/material.dart';
+import 'screens/video_picker_and_preview_screen.dart';
+
+void main() {
+  runApp(MyApp());
+}
+
+class MyApp extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Flutter Video Editor',
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+      ),
+      home: VideoPickerAndPreviewScreen(),
+    );
+  }
+}
+```
+
+#### 2. `screens/video_picker_and_preview_screen.dart`
+
+```dart
+import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:video_player/video_player.dart';
+import 'package:path_provider/path_provider.dart';
+import 'dart:io';
+import 'video_editor_screen.dart'; // 导入视频编辑页面
+
+class VideoPickerAndPreviewScreen extends StatefulWidget {
+  @override
+  _VideoPickerAndPreviewScreenState createState() => _VideoPickerAndPreviewScreenState();
+}
+
+class _VideoPickerAndPreviewScreenState extends State<VideoPickerAndPreviewScreen> {
+  VideoPlayerController? _videoPlayerController;
+  String? _videoPath;
+
+  @override
+  void dispose() {
+    _videoPlayerController?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickVideo() async {
+    FilePickerResult? result = await FilePicker.platform.pickFiles(
+      type: FileType.video,
+      allowMultiple: false,
+    );
+
+    if (result != null && result.files.single.path != null) {
+      setState(() {
+        _videoPath = result.files.single.path;
+      });
+      _initializeVideoPlayer();
+    }
+  }
+
+  Future<void> _initializeVideoPlayer() async {
+    if (_videoPath != null) {
+      _videoPlayerController?.dispose();
+      _videoPlayerController = VideoPlayerController.file(File(_videoPath!));
+      await _videoPlayerController!.initialize();
+      setState(() {});
+      _videoPlayerController!.play();
+      _videoPlayerController!.setLooping(true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text('选择视频')),
+      body: Column(
+        children: [
+          Expanded(
+            flex: 2,
+            child: _videoPlayerController != null && _videoPlayerController!.value.isInitialized
+                ? AspectRatio(
+                    aspectRatio: _videoPlayerController!.value.aspectRatio,
+                    child: VideoPlayer(_videoPlayerController!),
+                  )
+                : Center(child: Text('请选择视频')),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: ElevatedButton(
+              onPressed: _pickVideo,
+              child: Text('选择视频'),
+            ),
+          ),
+          if (_videoPath != null)
+            Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  ElevatedButton(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => VideoEditorScreen(
+                            videoPath: _videoPath!,
+                            editorMode: EditorMode.trim, // 进入时间轴裁剪模式
+                          ),
+                        ),
+                      );
+                    },
+                    child: Text('时间轴裁剪'),
+                  ),
+                  ElevatedButton(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => VideoEditorScreen(
+                            videoPath: _videoPath!,
+                            editorMode: EditorMode.cropCanvas, // 进入画布裁剪模式
+                          ),
+                        ),
+                      );
+                    },
+                    child: Text('画布裁剪'),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+enum EditorMode { trim, cropCanvas }
+```
+
+#### 3. `screens/video_editor_screen.dart` (核心编辑页面)
+
+这个页面将根据 `editorMode` 显示不同的UI。
+
+```dart
+import 'package:flutter/material.dart';
+import 'package:video_player/video_player.dart';
+import 'package:flutter_ffmpeg/flutter_ffmpeg.dart';
+import 'package:path_provider/path_provider.dart';
+import 'dart:io';
+import 'package:path/path.dart' as p;
+import '../widgets/crop_box_overlay.dart'; // 自定义裁剪框Widget
+
+// 导入前面定义的枚举
+import 'video_picker_and_preview_screen.dart';
+
+
+class VideoEditorScreen extends StatefulWidget {
+  final String videoPath;
+  final EditorMode editorMode;
+
+  VideoEditorScreen({required this.videoPath, required this.editorMode});
+
+  @override
+  _VideoEditorScreenState createState() => _VideoEditorScreenState();
+}
+
+class _VideoEditorScreenState extends State<VideoEditorScreen> {
+  VideoPlayerController? _videoPlayerController;
+  final FlutterFFmpeg _flutterFFmpeg = FlutterFFmpeg();
+
+  // 时间轴裁剪相关
+  Duration _trimStart = Duration.zero;
+  Duration _trimEnd = Duration.zero;
+  List<String> _thumbnailPaths = []; // 存储缩略图路径
+
+  // 画布裁剪相关
+  Rect _cropRect = Rect.zero; // 裁剪区域的矩形，相对于视频原始尺寸
+  double _videoWidth = 0;
+  double _videoHeight = 0;
+
+  bool _isProcessing = false; // 标记是否正在处理视频
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeVideoPlayer();
+  }
+
+  @override
+  void dispose() {
+    _videoPlayerController?.dispose();
+    // 清理缩略图文件
+    for (var path in _thumbnailPaths) {
+      File(path).deleteSync();
+    }
+    super.dispose();
+  }
+
+  Future<void> _initializeVideoPlayer() async {
+    _videoPlayerController = VideoPlayerController.file(File(widget.videoPath));
+    await _videoPlayerController!.initialize();
+    setState(() {
+      _trimEnd = _videoPlayerController!.value.duration;
+      _videoWidth = _videoPlayerController!.value.size.width;
+      _videoHeight = _videoPlayerController!.value.size.height;
+      _cropRect = Rect.fromLTWH(0, 0, _videoWidth, _videoHeight); // 初始化为全屏
+    });
+    _videoPlayerController!.play();
+    _videoPlayerController!.setLooping(true);
+
+    if (widget.editorMode == EditorMode.trim) {
+      _generateThumbnails();
+    }
+  }
+
+  // ---------------- 时间轴裁剪相关 ----------------
+  Future<void> _generateThumbnails() async {
+    if (_videoPlayerController == null || !_videoPlayerController!.value.isInitialized) return;
+
+    final videoDuration = _videoPlayerController!.value.duration;
+    final int thumbnailCount = 10; // 生成10张缩略图
+    final interval = videoDuration.inMilliseconds ~/ thumbnailCount;
+
+    Directory tempDir = await getTemporaryDirectory();
+    List<String> paths = [];
+
+    for (int i = 0; i < thumbnailCount; i++) {
+      final seekTime = Duration(milliseconds: i * interval);
+      final outputPath = p.join(tempDir.path, 'thumbnail_$i.jpg');
+      final command = '-ss ${_formatDuration(seekTime)} -i ${widget.videoPath} -vframes 1 $outputPath';
+      await _flutterFFmpeg.execute(command);
+      paths.add(outputPath);
+    }
+    setState(() {
+      _thumbnailPaths = paths;
+    });
+  }
+
+  Widget _buildTrimEditor() {
+    if (_videoPlayerController == null || !_videoPlayerController!.value.isInitialized) {
+      return Center(child: CircularProgressIndicator());
+    }
+    return Column(
+      children: [
+        Expanded(
+          flex: 2,
+          child: AspectRatio(
+            aspectRatio: _videoPlayerController!.value.aspectRatio,
+            child: VideoPlayer(_videoPlayerController!),
+          ),
+        ),
+        SizedBox(height: 20),
+        Text('裁剪范围: ${_formatDuration(_trimStart)} - ${_formatDuration(_trimEnd)}'),
+        SizedBox(height: 10),
+        // 模仿时间轴缩略图区域
+        Container(
+          height: 80, // 缩略图高度
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            itemCount: _thumbnailPaths.length,
+            itemBuilder: (context, index) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 2.0),
+                child: Image.file(File(_thumbnailPaths[index]), fit: BoxFit.cover),
+              );
+            },
+          ),
+        ),
+        // 简单的RangeSlider，实际UI会更复杂
+        RangeSlider(
+          values: RangeValues(_trimStart.inMilliseconds.toDouble(), _trimEnd.inMilliseconds.toDouble()),
+          min: 0,
+          max: _videoPlayerController!.value.duration.inMilliseconds.toDouble(),
+          onChanged: (RangeValues values) {
+            setState(() {
+              _trimStart = Duration(milliseconds: values.start.toInt());
+              _trimEnd = Duration(milliseconds: values.end.toInt());
+            });
+            _videoPlayerController!.seekTo(_trimStart); // 实时预览裁剪起点
+          },
+        ),
+        ElevatedButton(
+          onPressed: _isProcessing ? null : () => _processVideo(EditorMode.trim),
+          child: _isProcessing ? CircularProgressIndicator() : Text('确认裁剪'),
+        ),
+      ],
+    );
+  }
+
+  // ---------------- 画布裁剪相关 ----------------
+  Widget _buildCropCanvasEditor() {
+    if (_videoPlayerController == null || !_videoPlayerController!.value.isInitialized) {
+      return Center(child: CircularProgressIndicator());
+    }
+    return Column(
+      children: [
+        Expanded(
+          flex: 2,
+          child: GestureDetector(
+            onTap: () {
+              // 暂停/播放视频
+              if (_videoPlayerController!.value.isPlaying) {
+                _videoPlayerController!.pause();
+              } else {
+                _videoPlayerController!.play();
+              }
+            },
+            child: Stack(
+              children: [
+                AspectRatio(
+                  aspectRatio: _videoPlayerController!.value.aspectRatio,
+                  child: VideoPlayer(_videoPlayerController!),
+                ),
+                // 裁剪框叠加层
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    // 计算视频在当前布局中的实际渲染尺寸
+                    double actualVideoWidth = constraints.maxWidth;
+                    double actualVideoHeight = constraints.maxWidth / _videoPlayerController!.value.aspectRatio;
+
+                    // 如果视频实际高度超过了容器高度，则以容器高度为准
+                    if (actualVideoHeight > constraints.maxHeight) {
+                      actualVideoHeight = constraints.maxHeight;
+                      actualVideoWidth = constraints.maxHeight * _videoPlayerController!.value.aspectRatio;
+                    }
+
+                    // 计算裁剪框在屏幕上的位置和大小
+                    // 需要将_cropRect从原始视频尺寸转换到屏幕渲染尺寸
+                    final double scaleX = actualVideoWidth / _videoWidth;
+                    final double scaleY = actualVideoHeight / _videoHeight;
+
+                    Rect scaledCropRect = Rect.fromLTWH(
+                      _cropRect.left * scaleX,
+                      _cropRect.top * scaleY,
+                      _cropRect.width * scaleX,
+                      _cropRect.height * scaleY,
+                    );
+
+                    return CropBoxOverlay(
+                      cropRect: scaledCropRect,
+                      onUpdateCropRect: (newScaledCropRect) {
+                        setState(() {
+                          // 将屏幕尺寸的裁剪框转换回原始视频尺寸
+                          _cropRect = Rect.fromLTWH(
+                            newScaledCropRect.left / scaleX,
+                            newScaledCropRect.top / scaleY,
+                            newScaledCropRect.width / scaleX,
+                            newScaledCropRect.height / scaleY,
+                          );
+                        });
+                      },
+                      // 传递视频原始尺寸，以便CropBoxOverlay可以限制裁剪框的边界
+                      videoSize: Size(actualVideoWidth, actualVideoHeight),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+        // 底部操作区，参考第一张图
+        Container(
+          padding: EdgeInsets.symmetric(vertical: 16.0),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4)],
+          ),
+          child: Column(
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  Text('旋转', style: TextStyle(color: Colors.grey)),
+                  Text('裁剪', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue)), // 突出当前选中
+                ],
+              ),
+              SizedBox(height: 20),
+              // 可以显示裁剪框的当前尺寸信息
+              Text('裁剪尺寸: ${_cropRect.width.toInt()}x${_cropRect.height.toInt()}'),
+              // 实际的旋转和镜像按钮可以暂时不实现，因为只需要裁剪
+              // Row(
+              //   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              //   children: [
+              //     ElevatedButton(onPressed: () {}, child: Text('向右90°')),
+              //     ElevatedButton(onPressed: () {}, child: Text('镜像')),
+              //   ],
+              // ),
+              SizedBox(height: 20),
+              ElevatedButton(
+                onPressed: _isProcessing ? null : () => _processVideo(EditorMode.cropCanvas),
+                child: _isProcessing ? CircularProgressIndicator() : Text('确认裁剪'),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ---------------- 视频处理通用逻辑 ----------------
+  Future<void> _processVideo(EditorMode mode) async {
+    setState(() {
+      _isProcessing = true;
+    });
+
+    Directory appDocDir = await getApplicationDocumentsDirectory();
+    String outputPath = p.join(appDocDir.path, 'edited_video_${DateTime.now().millisecondsSinceEpoch}.mp4');
+
+    List<String> arguments = [];
+
+    // 通用输入
+    arguments.add('-i');
+    arguments.add(widget.videoPath);
+
+    if (mode == EditorMode.trim) {
+      // 时间轴裁剪特有参数
+      arguments.add('-ss');
+      arguments.add(_formatDuration(_trimStart));
+      arguments.add('-to');
+      arguments.add(_formatDuration(_trimEnd));
+      arguments.add('-c');
+      arguments.add('copy'); // 保持原画质，直接复制流
+    } else if (mode == EditorMode.cropCanvas) {
+      // 画布裁剪特有参数
+      if (_cropRect.width <= 0 || _cropRect.height <= 0) {
+         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('裁剪区域无效')));
+         setState(() {_isProcessing = false;});
+         return;
+      }
+      arguments.add('-vf');
+      arguments.add('crop=${_cropRect.width.toInt()}:${_cropRect.height.toInt()}:${_cropRect.left.toInt()}:${_cropRect.top.toInt()}');
+      arguments.add('-c:v');
+      arguments.add('libx264'); // 区域裁剪通常需要重新编码
+      arguments.add('-preset');
+      arguments.add('medium');
+      arguments.add('-crf');
+      arguments.add('23'); // 质量参数，23通常是好的折衷
+      arguments.add('-c:a');
+      arguments.add('copy'); // 音频可以保持不变
+    }
+
+    arguments.add(outputPath);
+
+    print('FFmpeg command: ${arguments.join(' ')}');
+
+    try {
+      int rc = await _flutterFFmpeg.executeWithArguments(arguments);
+
+      if (rc == 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('视频处理成功，保存到: $outputPath')),
+        );
+        // 可以跳转到预览页面或分享页面
+        // Navigator.pop(context, outputPath);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('视频处理失败，错误码: $rc')),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('视频处理异常: $e')),
+      );
+      print('FFmpeg error: $e');
+    } finally {
+      setState(() {
+        _isProcessing = false;
+      });
+    }
+  }
+
+  String _formatDuration(Duration d) {
+    String twoDigits(int n) => n.toString().padLeft(2, "0");
+    String twoDigitMinutes = twoDigits(d.inMinutes.remainder(60));
+    String twoDigitSeconds = twoDigits(d.inSeconds.remainder(60));
+    return "${twoDigits(d.inHours)}:$twoDigitMinutes:$twoDigitSeconds";
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.editorMode == EditorMode.trim ? '时间轴裁剪' : '画布裁剪'),
+        leading: IconButton(
+          icon: Icon(Icons.arrow_back),
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
+      body: _videoPlayerController == null || !_videoPlayerController!.value.isInitialized
+          ? Center(child: CircularProgressIndicator())
+          : (widget.editorMode == EditorMode.trim ? _buildTrimEditor() : _buildCropCanvasEditor()),
+    );
+  }
+}
+```
+
+#### 4. `widgets/crop_box_overlay.dart` (自定义裁剪框)
+
+这个Widget将负责绘制裁剪框和处理手势。
+
+```dart
+import 'package:flutter/material.dart';
+
+class CropBoxOverlay extends StatefulWidget {
+  final Rect cropRect; // 裁剪框在屏幕上的位置和大小
+  final ValueChanged<Rect> onUpdateCropRect;
+  final Size videoSize; // 视频在屏幕上渲染的实际尺寸，用于限制裁剪框边界
+
+  CropBoxOverlay({
+    required this.cropRect,
+    required this.onUpdateCropRect,
+    required this.videoSize,
+  });
+
+  @override
+  _CropBoxOverlayState createState() => _CropBoxOverlayState();
+}
+
+class _CropBoxOverlayState extends State<CropBoxOverlay> {
+  static const double _handleSize = 24.0; // 拖动手柄的大小
+
+  Rect _currentCropRect = Rect.zero;
+  Offset _startDragOffset = Offset.zero;
+  Rect _initialCropRect = Rect.zero;
+  _DragMode _dragMode = _DragMode.none;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentCropRect = widget.cropRect;
+  }
+
+  @override
+  void didUpdateWidget(covariant CropBoxOverlay oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.cropRect != oldWidget.cropRect) {
+      _currentCropRect = widget.cropRect;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onPanStart: _onPanStart,
+      onPanUpdate: _onPanUpdate,
+      onPanEnd: _onPanEnd,
+      child: CustomPaint(
+        painter: _CropBoxPainter(_currentCropRect),
+        child: Stack(
+          children: [
+            // 顶部左侧手柄
+            Positioned(
+              left: _currentCropRect.left - _handleSize / 2,
+              top: _currentCropRect.top - _handleSize / 2,
+              child: _buildHandle(_DragMode.topLeft),
+            ),
+            // 顶部右侧手柄
+            Positioned(
+              right: widget.videoSize.width - _currentCropRect.right - _handleSize / 2,
+              top: _currentCropRect.top - _handleSize / 2,
+              child: _buildHandle(_DragMode.topRight),
+            ),
+            // 底部左侧手柄
+            Positioned(
+              left: _currentCropRect.left - _handleSize / 2,
+              bottom: widget.videoSize.height - _currentCropRect.bottom - _handleSize / 2,
+              child: _buildHandle(_DragMode.bottomLeft),
+            ),
+            // 底部右侧手柄
+            Positioned(
+              right: widget.videoSize.width - _currentCropRect.right - _handleSize / 2,
+              bottom: widget.videoSize.height - _currentCropRect.bottom - _handleSize / 2,
+              child: _buildHandle(_DragMode.bottomRight),
+            ),
+             // 顶部手柄
+            Positioned(
+              left: _currentCropRect.left + _currentCropRect.width / 2 - _handleSize / 2,
+              top: _currentCropRect.top - _handleSize / 2,
+              child: _buildHandle(_DragMode.top),
+            ),
+             // 底部手柄
+            Positioned(
+              left: _currentCropRect.left + _currentCropRect.width / 2 - _handleSize / 2,
+              bottom: widget.videoSize.height - _currentCropRect.bottom - _handleSize / 2,
+              child: _buildHandle(_DragMode.bottom),
+            ),
+             // 左侧手柄
+            Positioned(
+              left: _currentCropRect.left - _handleSize / 2,
+              top: _currentCropRect.top + _currentCropRect.height / 2 - _handleSize / 2,
+              child: _buildHandle(_DragMode.left),
+            ),
+             // 右侧手柄
+            Positioned(
+              right: widget.videoSize.width - _currentCropRect.right - _handleSize / 2,
+              top: _currentCropRect.top + _currentCropRect.height / 2 - _handleSize / 2,
+              child: _buildHandle(_DragMode.right),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHandle(_DragMode mode) {
+    return GestureDetector(
+      onPanStart: (details) {
+        _startDragOffset = details.localPosition;
+        _initialCropRect = _currentCropRect;
+        _dragMode = mode;
+      },
+      onPanUpdate: (details) {
+        final currentPosition = details.localPosition;
+        final delta = currentPosition - _startDragOffset;
+        _updateCropRect(delta);
+      },
+      onPanEnd: (details) {
+        _dragMode = _DragMode.none;
+        widget.onUpdateCropRect(_currentCropRect);
+      },
+      child: Container(
+        width: _handleSize,
+        height: _handleSize,
+        decoration: BoxDecoration(
+          color: Colors.yellow.withOpacity(0.7),
+          border: Border.all(color: Colors.white, width: 1.5),
+          borderRadius: BorderRadius.circular(_handleSize / 2),
+        ),
+      ),
+    );
+  }
+
+  // 识别是拖动裁剪框内部，还是拖动某个手柄
+  void _onPanStart(DragStartDetails details) {
+    _startDragOffset = details.localPosition;
+    _initialCropRect = _currentCropRect;
+
+    // 检查是否在裁剪框内部
+    if (_currentCropRect.contains(_startDragOffset)) {
+      _dragMode = _DragMode.move;
+    } else {
+      _dragMode = _getDragModeFromPosition(details.localPosition);
+    }
+  }
+
+  void _onPanUpdate(DragUpdateDetails details) {
+    final delta = details.localPosition - _startDragOffset;
+    _updateCropRect(delta);
+  }
+
+  void _onPanEnd(DragEndDetails details) {
+    _dragMode = _DragMode.none;
+    widget.onUpdateCropRect(_currentCropRect); // 拖动结束后通知父组件更新裁剪区域
+  }
+
+  _DragMode _getDragModeFromPosition(Offset position) {
+    // 这里需要根据position判断离哪个手柄最近，或者在哪个边缘区域
+    // 简化处理：如果不在手柄上，则默认为移动内部
+    return _DragMode.move;
+  }
+
+  void _updateCropRect(Offset delta) {
+    setState(() {
+      double newLeft = _initialCropRect.left;
+      double newTop = _initialCropRect.top;
+      double newWidth = _initialCropRect.width;
+      double newHeight = _initialCropRect.height;
+
+      switch (_dragMode) {
+        case _DragMode.move:
+          newLeft = _initialCropRect.left + delta.dx;
+          newTop = _initialCropRect.top + delta.dy;
+          break;
+        case _DragMode.topLeft:
+          newLeft = _initialCropRect.left + delta.dx;
+          newTop = _initialCropRect.top + delta.dy;
+          newWidth = _initialCropRect.width - delta.dx;
+          newHeight = _initialCropRect.height - delta.dy;
+          break;
+        case _DragMode.topRight:
+          newTop = _initialCropRect.top + delta.dy;
+          newWidth = _initialCropRect.width + delta.dx;
+          newHeight = _initialCropRect.height - delta.dy;
+          break;
+        case _DragMode.bottomLeft:
+          newLeft = _initialCropRect.left + delta.dx;
+          newWidth = _initialCropRect.width - delta.dx;
+          newHeight = _initialCropRect.height + delta.dy;
+          break;
+        case _DragMode.bottomRight:
+          newWidth = _initialCropRect.width + delta.dx;
+          newHeight = _initialCropRect.height + delta.dy;
+          break;
+        case _DragMode.top:
+          newTop = _initialCropRect.top + delta.dy;
+          newHeight = _initialCropRect.height - delta.dy;
+          break;
+        case _DragMode.bottom:
+          newHeight = _initialCropRect.height + delta.dy;
+          break;
+        case _DragMode.left:
+          newLeft = _initialCropRect.left + delta.dx;
+          newWidth = _initialCropRect.width - delta.dx;
+          break;
+        case _DragMode.right:
+          newWidth = _initialCropRect.width + delta.dx;
+          break;
+        case _DragMode.none:
+          break;
+      }
+
+      // 边界限制和最小尺寸限制
+      newLeft = newLeft.clamp(0.0, widget.videoSize.width - 10.0); // 至少保留10像素宽度
+      newTop = newTop.clamp(0.0, widget.videoSize.height - 10.0); // 至少保留10像素高度
+      newWidth = newWidth.clamp(10.0, widget.videoSize.width - newLeft);
+      newHeight = newHeight.clamp(10.0, widget.videoSize.height - newTop);
+
+      // 调整为规范的Rect
+      _currentCropRect = Rect.fromLTWH(newLeft, newTop, newWidth, newHeight);
+
+      // 确保裁剪框不会超出视频区域
+      _currentCropRect = Rect.fromLTWH(
+        _currentCropRect.left.clamp(0.0, widget.videoSize.width - _currentCropRect.width),
+        _currentCropRect.top.clamp(0.0, widget.videoSize.height - _currentCropRect.height),
+        _currentCropRect.width,
+        _currentCropRect.height,
+      );
+    });
+  }
+}
+
+enum _DragMode { none, move, topLeft, topRight, bottomLeft, bottomRight, top, bottom, left, right }
+
+class _CropBoxPainter extends CustomPainter {
+  final Rect cropRect;
+
+  _CropBoxPainter(this.cropRect);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final Paint fillPaint = Paint()..color = Colors.black.withOpacity(0.5); // 半透明背景
+
+    // 绘制外部遮罩
+    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, cropRect.top), fillPaint); // 上
+    canvas.drawRect(Rect.fromLTWH(0, cropRect.bottom, size.width, size.height - cropRect.bottom), fillPaint); // 下
+    canvas.drawRect(Rect.fromLTWH(0, cropRect.top, cropRect.left, cropRect.height), fillPaint); // 左
+    canvas.drawRect(Rect.fromLTWH(cropRect.right, cropRect.top, size.width - cropRect.right, cropRect.height), fillPaint); // 右
+
+    final Paint borderPaint = Paint()
+      ..color = Colors.yellow
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.0;
+
+    // 绘制裁剪框边框
+    canvas.drawRect(cropRect, borderPaint);
+
+    // 绘制九宫格网格线
+    final Paint gridPaint = Paint()
+      ..color = Colors.yellow.withOpacity(0.7)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0;
+
+    // 垂直线
+    canvas.drawLine(Offset(cropRect.left + cropRect.width / 3, cropRect.top),
+        Offset(cropRect.left + cropRect.width / 3, cropRect.bottom), gridPaint);
+    canvas.drawLine(Offset(cropRect.left + cropRect.width * 2 / 3, cropRect.top),
+        Offset(cropRect.left + cropRect.width * 2 / 3, cropRect.bottom), gridPaint);
+```
+  
+使用 [ffmpeg_kit_flutter_new](https://pub.dev/packages/ffmpeg_kit_flutter_new) 作为 ffmpeg 库,之前是相应的代码可能需要更改.
