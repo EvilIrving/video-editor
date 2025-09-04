@@ -17,12 +17,14 @@ class CropBoxOverlay extends StatefulWidget {
 }
 
 class _CropBoxOverlayState extends State<CropBoxOverlay> {
-  static const double _handleSize = 24.0;
+  static const double _handleSize = 20.0;  // 更小的手柄尺寸，适配手机端
+  static const double _minSize = 40.0;     // 更小的最小裁剪框尺寸
 
   Rect _current = Rect.zero;
   Offset _startDrag = Offset.zero;
   Rect _initial = Rect.zero;
   _DragMode _mode = _DragMode.none;
+  bool _isDragging = false;
 
   @override
   void initState() {
@@ -40,109 +42,222 @@ class _CropBoxOverlayState extends State<CropBoxOverlay> {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onPanStart: _onPanStart,
-      onPanUpdate: _onPanUpdate,
-      onPanEnd: _onPanEnd,
-      child: CustomPaint(
-        painter: _CropBoxPainter(_current),
-        child: Stack(
-          children: [
-            Positioned(
-              left: _current.left - _handleSize / 2,
-              top: _current.top - _handleSize / 2,
-              child: _buildHandle(_DragMode.topLeft),
+    return Stack(
+      children: [
+        // 背景手势检测器 - 只处理整体移动
+        Positioned.fill(
+          child: GestureDetector(
+            onPanStart: _onBackgroundPanStart,
+            onPanUpdate: _onBackgroundPanUpdate,
+            onPanEnd: _onBackgroundPanEnd,
+            child: CustomPaint(
+              painter: _CropBoxPainter(_current, _isDragging),
             ),
-            Positioned(
-              right: widget.videoSize.width - _current.right - _handleSize / 2,
-              top: _current.top - _handleSize / 2,
-              child: _buildHandle(_DragMode.topRight),
-            ),
-            Positioned(
-              left: _current.left - _handleSize / 2,
-              bottom: widget.videoSize.height - _current.bottom - _handleSize / 2,
-              child: _buildHandle(_DragMode.bottomLeft),
-            ),
-            Positioned(
-              right: widget.videoSize.width - _current.right - _handleSize / 2,
-              bottom: widget.videoSize.height - _current.bottom - _handleSize / 2,
-              child: _buildHandle(_DragMode.bottomRight),
-            ),
-            Positioned(
-              left: _current.left + _current.width / 2 - _handleSize / 2,
-              top: _current.top - _handleSize / 2,
-              child: _buildHandle(_DragMode.top),
-            ),
-            // bottom handles贴边，确保以裁剪框与画布底边对齐
-            Positioned(
-              left: _current.left + _current.width / 2 - _handleSize / 2,
-              bottom: widget.videoSize.height - _current.bottom - _handleSize / 2,
-              child: _buildHandle(_DragMode.bottom),
-            ),
-            Positioned(
-              left: _current.left - _handleSize / 2,
-              top: _current.top + _current.height / 2 - _handleSize / 2,
-              child: _buildHandle(_DragMode.left),
-            ),
-            Positioned(
-              right: widget.videoSize.width - _current.right - _handleSize / 2,
-              top: _current.top + _current.height / 2 - _handleSize / 2,
-              child: _buildHandle(_DragMode.right),
-            ),
-          ],
+          ),
+        ),
+        
+        // 手柄（可开关显示）
+        if (mounted) ...[
+          _buildCornerHandle(_DragMode.topLeft, Alignment.topLeft),
+          _buildCornerHandle(_DragMode.topRight, Alignment.topRight),
+          _buildCornerHandle(_DragMode.bottomLeft, Alignment.bottomLeft),
+          _buildCornerHandle(_DragMode.bottomRight, Alignment.bottomRight),
+          _buildEdgeHandle(_DragMode.top, Alignment.topCenter),
+          _buildEdgeHandle(_DragMode.bottom, Alignment.bottomCenter),
+          _buildEdgeHandle(_DragMode.left, Alignment.centerLeft),
+          _buildEdgeHandle(_DragMode.right, Alignment.centerRight),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildCornerHandle(_DragMode mode, Alignment alignment) {
+    return Positioned(
+      left: _getHandleLeft(alignment),
+      top: _getHandleTop(alignment),
+      child: GestureDetector(
+        onPanStart: (details) => _onHandlePanStart(details, mode),
+        onPanUpdate: _onHandlePanUpdate,
+        onPanEnd: _onHandlePanEnd,
+        child: Container(
+          width: _handleSize,
+          height: _handleSize,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border.all(color: Colors.blue, width: 2.0),
+            borderRadius: BorderRadius.circular(4.0),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.3),
+                blurRadius: 4.0,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Icon(
+            _getCornerIcon(mode),
+            size: 16.0,
+            color: Colors.blue,
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildHandle(_DragMode mode) {
-    return GestureDetector(
-      onPanStart: (details) {
-        _startDrag = details.localPosition;
-        _initial = _current;
-        _mode = mode;
-      },
-      onPanUpdate: (details) {
-        final Offset delta = details.localPosition - _startDrag;
-        _updateCropRect(delta);
-      },
-      onPanEnd: (_) {
-        _mode = _DragMode.none;
-        widget.onUpdateCropRect(_current);
-      },
-      child: Container(
-        width: _handleSize,
-        height: _handleSize,
-        decoration: BoxDecoration(
-          color: Colors.yellow.withOpacity(0.7),
-          border: Border.all(color: Colors.white, width: 1.5),
-          borderRadius: BorderRadius.circular(_handleSize / 2),
+  Widget _buildEdgeHandle(_DragMode mode, Alignment alignment) {
+    return Positioned(
+      left: _getHandleLeft(alignment),
+      top: _getHandleTop(alignment),
+      child: GestureDetector(
+        onPanStart: (details) => _onHandlePanStart(details, mode),
+        onPanUpdate: _onHandlePanUpdate,
+        onPanEnd: _onHandlePanEnd,
+        child: Container(
+          width: _handleSize,
+          height: _handleSize,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border.all(color: Colors.blue, width: 2.0),
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.3),
+                blurRadius: 4.0,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Icon(
+            _getEdgeIcon(mode),
+            size: 16.0,
+            color: Colors.blue,
+          ),
         ),
       ),
     );
   }
 
-  void _onPanStart(DragStartDetails details) {
-    _startDrag = details.localPosition;
-    _initial = _current;
-    if (_current.contains(_startDrag)) {
-      _mode = _DragMode.move;
-    } else {
-      _mode = _DragMode.move; // 简化：不在手柄上即移动
+  double _getHandleLeft(Alignment alignment) {
+    switch (alignment) {
+      case Alignment.topLeft:
+      case Alignment.centerLeft:
+      case Alignment.bottomLeft:
+        return _current.left - _handleSize / 2;
+      case Alignment.topCenter:
+      case Alignment.bottomCenter:
+        return _current.left + _current.width / 2 - _handleSize / 2;
+      case Alignment.topRight:
+      case Alignment.centerRight:
+      case Alignment.bottomRight:
+        return _current.right - _handleSize / 2;
+      default:
+        return 0;
     }
   }
 
-  void _onPanUpdate(DragUpdateDetails details) {
+  double _getHandleTop(Alignment alignment) {
+    switch (alignment) {
+      case Alignment.topLeft:
+      case Alignment.topCenter:
+      case Alignment.topRight:
+        return _current.top - _handleSize / 2;
+      case Alignment.centerLeft:
+      case Alignment.centerRight:
+        return _current.top + _current.height / 2 - _handleSize / 2;
+      case Alignment.bottomLeft:
+      case Alignment.bottomCenter:
+      case Alignment.bottomRight:
+        return _current.bottom - _handleSize / 2;
+      default:
+        return 0;
+    }
+  }
+
+  IconData _getCornerIcon(_DragMode mode) {
+    switch (mode) {
+      case _DragMode.topLeft:
+        return Icons.north_west;
+      case _DragMode.topRight:
+        return Icons.north_east;
+      case _DragMode.bottomLeft:
+        return Icons.south_west;
+      case _DragMode.bottomRight:
+        return Icons.south_east;
+      default:
+        return Icons.crop_free;
+    }
+  }
+
+  IconData _getEdgeIcon(_DragMode mode) {
+    switch (mode) {
+      case _DragMode.top:
+        return Icons.north;
+      case _DragMode.bottom:
+        return Icons.south;
+      case _DragMode.left:
+        return Icons.west;
+      case _DragMode.right:
+        return Icons.east;
+      default:
+        return Icons.crop_free;
+    }
+  }
+
+  // 背景手势处理 - 整体移动
+  void _onBackgroundPanStart(DragStartDetails details) {
+    if (!_current.contains(details.localPosition)) return;
+    
+    _startDrag = details.localPosition;
+    _initial = _current;
+    _mode = _DragMode.move;
+    setState(() {
+      _isDragging = true;
+    });
+  }
+
+  void _onBackgroundPanUpdate(DragUpdateDetails details) {
+    if (_mode != _DragMode.move) return;
+    
     final Offset delta = details.localPosition - _startDrag;
     _updateCropRect(delta);
   }
 
-  void _onPanEnd(DragEndDetails details) {
+  void _onBackgroundPanEnd(DragEndDetails details) {
+    if (_mode != _DragMode.move) return;
+    
     _mode = _DragMode.none;
+    setState(() {
+      _isDragging = false;
+    });
+    widget.onUpdateCropRect(_current);
+  }
+
+  // 手柄手势处理
+  void _onHandlePanStart(DragStartDetails details, _DragMode mode) {
+    _startDrag = details.localPosition;
+    _initial = _current;
+    _mode = mode;
+    setState(() {
+      _isDragging = true;
+    });
+  }
+
+  void _onHandlePanUpdate(DragUpdateDetails details) {
+    final Offset delta = details.localPosition - _startDrag;
+    _updateCropRect(delta);
+  }
+
+  void _onHandlePanEnd(DragEndDetails details) {
+    _mode = _DragMode.none;
+    setState(() {
+      _isDragging = false;
+    });
     widget.onUpdateCropRect(_current);
   }
 
   void _updateCropRect(Offset delta) {
+    if (!mounted) return;
+    
     setState(() {
       double newLeft = _initial.left;
       double newTop = _initial.top;
@@ -192,19 +307,14 @@ class _CropBoxOverlayState extends State<CropBoxOverlay> {
           break;
       }
 
-      newLeft = newLeft.clamp(0.0, widget.videoSize.width - 10.0);
-      newTop = newTop.clamp(0.0, widget.videoSize.height - 10.0);
-      newWidth = newWidth.clamp(10.0, widget.videoSize.width - newLeft);
-      newHeight = newHeight.clamp(10.0, widget.videoSize.height - newTop);
+      // 应用边界和尺寸限制
+      newWidth = newWidth.clamp(_minSize, widget.videoSize.width);
+      newHeight = newHeight.clamp(_minSize, widget.videoSize.height);
+      
+      newLeft = newLeft.clamp(0.0, widget.videoSize.width - newWidth);
+      newTop = newTop.clamp(0.0, widget.videoSize.height - newHeight);
 
       _current = Rect.fromLTWH(newLeft, newTop, newWidth, newHeight);
-
-      _current = Rect.fromLTWH(
-        _current.left.clamp(0.0, widget.videoSize.width - _current.width),
-        _current.top.clamp(0.0, widget.videoSize.height - _current.height),
-        _current.width,
-        _current.height,
-      );
     });
   }
 }
@@ -213,57 +323,73 @@ enum _DragMode { none, move, topLeft, topRight, bottomLeft, bottomRight, top, bo
 
 class _CropBoxPainter extends CustomPainter {
   final Rect cropRect;
+  final bool isDragging;
 
-  _CropBoxPainter(this.cropRect);
+  _CropBoxPainter(this.cropRect, this.isDragging);
 
   @override
   void paint(Canvas canvas, Size size) {
-    final Paint fillPaint = Paint()..color = Colors.black.withOpacity(0.5);
+    // 半透明遮罩
+    final Paint maskPaint = Paint()..color = Colors.black.withOpacity(0.6);
 
-    // 外部遮罩
-    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, cropRect.top), fillPaint);
-    canvas.drawRect(Rect.fromLTWH(0, cropRect.bottom, size.width, size.height - cropRect.bottom), fillPaint);
-    canvas.drawRect(Rect.fromLTWH(0, cropRect.top, cropRect.left, cropRect.height), fillPaint);
-    canvas.drawRect(Rect.fromLTWH(cropRect.right, cropRect.top, size.width - cropRect.right, cropRect.height), fillPaint);
+    // 绘制外部遮罩区域
+    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, cropRect.top), maskPaint);
+    canvas.drawRect(Rect.fromLTWH(0, cropRect.bottom, size.width, size.height - cropRect.bottom), maskPaint);
+    canvas.drawRect(Rect.fromLTWH(0, cropRect.top, cropRect.left, cropRect.height), maskPaint);
+    canvas.drawRect(Rect.fromLTWH(cropRect.right, cropRect.top, size.width - cropRect.right, cropRect.height), maskPaint);
 
+    // 裁剪框边框
     final Paint borderPaint = Paint()
-      ..color = Colors.yellow
+      ..color = isDragging ? Colors.blue : Colors.white
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.0;
+      ..strokeWidth = isDragging ? 3.0 : 2.0;
+    
     canvas.drawRect(cropRect, borderPaint);
 
-    final Paint gridPaint = Paint()
-      ..color = Colors.yellow.withOpacity(0.7)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.0;
+    // 九宫格网格线（仅在拖拽时显示）
+    if (isDragging) {
+      final Paint gridPaint = Paint()
+        ..color = Colors.white.withOpacity(0.8)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.0;
 
-    // 垂直九宫格
-    canvas.drawLine(
-      Offset(cropRect.left + cropRect.width / 3, cropRect.top),
-      Offset(cropRect.left + cropRect.width / 3, cropRect.bottom),
-      gridPaint,
-    );
-    canvas.drawLine(
-      Offset(cropRect.left + cropRect.width * 2 / 3, cropRect.top),
-      Offset(cropRect.left + cropRect.width * 2 / 3, cropRect.bottom),
-      gridPaint,
-    );
+      // 垂直网格线
+      final double thirdWidth = cropRect.width / 3;
+      canvas.drawLine(
+        Offset(cropRect.left + thirdWidth, cropRect.top),
+        Offset(cropRect.left + thirdWidth, cropRect.bottom),
+        gridPaint,
+      );
+      canvas.drawLine(
+        Offset(cropRect.left + thirdWidth * 2, cropRect.top),
+        Offset(cropRect.left + thirdWidth * 2, cropRect.bottom),
+        gridPaint,
+      );
 
-    // 水平九宫格
-    canvas.drawLine(
-      Offset(cropRect.left, cropRect.top + cropRect.height / 3),
-      Offset(cropRect.right, cropRect.top + cropRect.height / 3),
-      gridPaint,
-    );
-    canvas.drawLine(
-      Offset(cropRect.left, cropRect.top + cropRect.height * 2 / 3),
-      Offset(cropRect.right, cropRect.top + cropRect.height * 2 / 3),
-      gridPaint,
-    );
+      // 水平网格线
+      final double thirdHeight = cropRect.height / 3;
+      canvas.drawLine(
+        Offset(cropRect.left, cropRect.top + thirdHeight),
+        Offset(cropRect.right, cropRect.top + thirdHeight),
+        gridPaint,
+      );
+      canvas.drawLine(
+        Offset(cropRect.left, cropRect.top + thirdHeight * 2),
+        Offset(cropRect.right, cropRect.top + thirdHeight * 2),
+        gridPaint,
+      );
+    }
+
+    // 裁剪框内部轻微高亮（拖拽时）
+    if (isDragging) {
+      final Paint highlightPaint = Paint()..color = Colors.blue.withOpacity(0.1);
+      canvas.drawRect(cropRect, highlightPaint);
+    }
   }
 
   @override
-  bool shouldRepaint(covariant _CropBoxPainter oldDelegate) => oldDelegate.cropRect != cropRect;
+  bool shouldRepaint(covariant _CropBoxPainter oldDelegate) => 
+      oldDelegate.cropRect != cropRect || oldDelegate.isDragging != isDragging;
 }
 
 

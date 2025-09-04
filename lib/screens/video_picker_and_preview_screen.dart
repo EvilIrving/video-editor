@@ -72,28 +72,53 @@ class _VideoPickerAndPreviewScreenState extends State<VideoPickerAndPreviewScree
 
   @override
   Widget build(BuildContext context) {
+    final double cardWidth = MediaQuery.of(context).size.width - 32;
+    final double cardHeight = cardWidth * 0.55;
     return Scaffold(
-      appBar: AppBar(title: const Text('选择视频')),
-      body: Column(
-        children: [
-          Expanded(
-            flex: 2,
-            child: _videoPlayerController != null && _videoPlayerController!.value.isInitialized
-                ? AspectRatio(
-                    aspectRatio: _videoPlayerController!.value.aspectRatio,
-                    child: VideoPlayer(_videoPlayerController!),
-                  )
-                : const Center(child: Text('请选择视频')),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: ElevatedButton(
-              onPressed: _pickVideo,
-              child: const Text('选择视频'),
+      backgroundColor: const Color(0xFF11131A),
+      appBar: AppBar(
+        elevation: 0,
+        backgroundColor: const Color(0xFF11131A),
+        // 移除title
+      ),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+          child: GestureDetector(
+            onTap: _pickVideo,
+            child: Container(
+              width: cardWidth,
+              height: cardHeight,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(28),
+                gradient: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Color(0xFFFFC3A0),
+                    Color(0xFFF48FB1),
+                    Color(0xFF8E9BFF),
+                  ],
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.25),
+                    blurRadius: 12,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: const [
+                  Icon(Icons.add_circle, size: 64, color: Colors.white),
+                  SizedBox(height: 12),
+                  Text('开始创作', style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+                ],
+              ),
             ),
           ),
-          // 统一到编辑页，移除两个入口按钮
-        ],
+        ),
       ),
     );
   }

@@ -9,6 +9,8 @@ import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 
 import '../widgets/crop_box_overlay.dart';
+import '../widgets/tool_icon_button.dart';
+import 'preview_player_screen.dart';
 
 class VideoEditorScreen extends StatefulWidget {
   final String videoPath;
@@ -33,6 +35,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   double _videoHeight = 0;
 
   bool _isProcessing = false;
+  bool _cropEnabled = false;   // 画布裁剪开关
+  bool _muteEnabled = false;   // 静音导出
 
   @override
   void initState() {
@@ -42,6 +46,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
 
   @override
   void dispose() {
+    _videoPlayerController?.removeListener(_onVideoPlayerUpdate);
     _videoPlayerController?.dispose();
     for (final path in _thumbnailPaths) {
       try {
@@ -61,9 +66,33 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       _cropRect = Rect.fromLTWH(0, 0, _videoWidth, _videoHeight);
     });
     await _videoPlayerController!.setLooping(false);
+    
+    // 添加播放监听器，用于预览模式的播放控制
+    _videoPlayerController!.addListener(_onVideoPlayerUpdate);
+    
     // 不自动播放，统一添加播放按钮控制
     await _generateThumbnails();
   }
+
+  // ---- 视频播放监听器 ----
+  void _onVideoPlayerUpdate() {}
+
+  // ---- 预览播放控制 ----
+  Future<void> _togglePreviewPlayback() async {
+    if (_videoPlayerController == null || !_videoPlayerController!.value.isInitialized) return;
+
+    if (_videoPlayerController!.value.isPlaying) {
+      // 当前正在播放，暂停
+      await _videoPlayerController!.pause();
+    } else {
+      // 跳转到裁剪开始时间并播放
+      await _videoPlayerController!.seekTo(_trimStart);
+      await _videoPlayerController!.play();
+    }
+  }
+
+  // ---- 计算预览进度 ----
+  double _calculatePreviewProgress() { return 0.0; }
 
   // ---- 时间轴裁剪：缩略图生成 ----
   Future<void> _generateThumbnails() async {
@@ -94,77 +123,6 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     }
   }
 
-  Widget _buildTrimEditor() {
-    if (_videoPlayerController == null || !_videoPlayerController!.value.isInitialized) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    return Column(
-      children: [
-        Expanded(
-          flex: 2,
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              AspectRatio(
-                aspectRatio: _videoPlayerController!.value.aspectRatio,
-                child: VideoPlayer(_videoPlayerController!),
-              ),
-              Positioned(
-                bottom: 12,
-                right: 12,
-                child: FloatingActionButton.small(
-                  onPressed: () async {
-                    if (_videoPlayerController!.value.isPlaying) {
-                      await _videoPlayerController!.pause();
-                    } else {
-                      await _videoPlayerController!.play();
-                    }
-                    setState(() {});
-                  },
-                  child: Icon(_videoPlayerController!.value.isPlaying ? Icons.pause : Icons.play_arrow),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 20),
-        Text('裁剪范围: ${_formatDuration(_trimStart)} - ${_formatDuration(_trimEnd)}'),
-        const SizedBox(height: 10),
-        SizedBox(
-          height: 80,
-          child: ListView.builder(
-            scrollDirection: Axis.horizontal,
-            itemCount: _thumbnailPaths.length,
-            itemBuilder: (context, index) {
-              return Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 2.0),
-                child: Image.file(File(_thumbnailPaths[index]), fit: BoxFit.cover),
-              );
-            },
-          ),
-        ),
-        RangeSlider(
-          values: RangeValues(
-            _trimStart.inMilliseconds.toDouble(),
-            _trimEnd.inMilliseconds.toDouble(),
-          ),
-          min: 0,
-          max: _videoPlayerController!.value.duration.inMilliseconds.toDouble(),
-          onChanged: (RangeValues values) {
-            setState(() {
-              _trimStart = Duration(milliseconds: values.start.toInt());
-              _trimEnd = Duration(milliseconds: values.end.toInt());
-            });
-            _videoPlayerController!.seekTo(_trimStart);
-          },
-        ),
-        ElevatedButton(
-          onPressed: _isProcessing ? null : _processVideoCombined,
-          child: _isProcessing ? const CircularProgressIndicator() : const Text('确认裁剪'),
-        ),
-      ],
-    );
-  }
 
   // ---- 画布裁剪 ----
   Widget _buildCropCanvasEditor() {
@@ -206,51 +164,47 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
                     child: SizedBox(
                       width: actualVideoWidth,
                       height: actualVideoHeight,
-                      child: CropBoxOverlay(
-                        cropRect: scaledCropRect,
-                        onUpdateCropRect: (Rect newScaled) {
-                          setState(() {
-                            _cropRect = Rect.fromLTWH(
-                              newScaled.left / scaleX,
-                              newScaled.top / scaleY,
-                              newScaled.width / scaleX,
-                              newScaled.height / scaleY,
-                            );
-                          });
-                        },
-                        videoSize: Size(actualVideoWidth, actualVideoHeight),
+                      child: Stack(
+                        children: [
+                          if (_cropEnabled)
+                            CropBoxOverlay(
+                              cropRect: scaledCropRect,
+                              onUpdateCropRect: (Rect newScaled) {
+                                setState(() {
+                                  _cropRect = Rect.fromLTWH(
+                                    newScaled.left / scaleX,
+                                    newScaled.top / scaleY,
+                                    newScaled.width / scaleX,
+                                    newScaled.height / scaleY,
+                                  );
+                                });
+                              },
+                              videoSize: Size(actualVideoWidth, actualVideoHeight),
+                            ),
+                          // 左上角尺寸信息（更轻量）
+                          if (_cropEnabled)
+                            Positioned(
+                              left: 8,
+                              top: 8,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: Colors.black54,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Text(
+                                  '${_cropRect.width.toInt()}×${_cropRect.height.toInt()}',
+                                  style: const TextStyle(color: Colors.white, fontSize: 12),
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                     ),
                   );
                 },
               ),
-              Positioned(
-                bottom: 12,
-                right: 12,
-                child: FloatingActionButton.small(
-                  onPressed: () async {
-                    if (_videoPlayerController!.value.isPlaying) {
-                      await _videoPlayerController!.pause();
-                    } else {
-                      await _videoPlayerController!.play();
-                    }
-                    setState(() {});
-                  },
-                  child: Icon(_videoPlayerController!.value.isPlaying ? Icons.pause : Icons.play_arrow),
-                ),
-              ),
-            ],
-          ),
-        ),
-        Container(
-          padding: const EdgeInsets.symmetric(vertical: 16.0),
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4)],
-          ),
-          child: Column(
-            children: [
-              Text('裁剪尺寸: ${_cropRect.width.toInt()}x${_cropRect.height.toInt()}'),
+              // 移除中心控制条（工具统一到时间轴下方）
             ],
           ),
         ),
@@ -259,23 +213,33 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   }
 
   // ---- 处理视频 ----
-  Future<void> _processVideoCombined() async {
+  Future<void> _processVideoCombined({bool preview = false}) async {
     setState(() {
       _isProcessing = true;
     });
 
-    final Directory appDocDir = await getApplicationDocumentsDirectory();
-    final String outputPath = p.join(appDocDir.path, 'edited_${DateTime.now().millisecondsSinceEpoch}.mp4');
+    final Directory dir = preview ? await getTemporaryDirectory() : await getApplicationDocumentsDirectory();
+    final String outputPath = p.join(dir.path, preview ? 'preview_${DateTime.now().millisecondsSinceEpoch}.mp4' : 'edited_${DateTime.now().millisecondsSinceEpoch}.mp4');
 
     String cmd;
     final Duration duration = _trimEnd - _trimStart;
     final bool hasTrim = duration > Duration.zero;
-    final bool hasCrop = _cropRect.width.toInt() != _videoWidth.toInt() || _cropRect.height.toInt() != _videoHeight.toInt() || _cropRect.left.toInt() != 0 || _cropRect.top.toInt() != 0;
+    final bool hasCrop = _cropEnabled && (
+      _cropRect.width.toInt() != _videoWidth.toInt() ||
+      _cropRect.height.toInt() != _videoHeight.toInt() ||
+      _cropRect.left.toInt() != 0 ||
+      _cropRect.top.toInt() != 0
+    );
+    final bool wantMute = _muteEnabled;
 
-    if (!hasCrop) {
-      // 仅时间轴裁剪，直接复制流，保持原画质与体积
+    if (!hasCrop && !wantMute) {
+      // 仅时间轴裁剪，直接复制所有流
       final String timing = hasTrim ? "-ss ${_formatDuration(_trimStart)} -t ${_formatDuration(duration)}" : "";
       cmd = "$timing -i '${widget.videoPath}' -c copy '$outputPath'".trim();
+    } else if (!hasCrop && wantMute) {
+      // 仅静音 + 可叠加时间轴，视频流copy，去掉音频
+      final String timing = hasTrim ? "-ss ${_formatDuration(_trimStart)} -t ${_formatDuration(duration)}" : "";
+      cmd = "$timing -i '${widget.videoPath}' -c:v copy -an '$outputPath'".trim();
     } else {
       // 需要画布裁剪 -> 重新编码视频，音频拷贝；可叠加时间轴
       if (_cropRect.width <= 0 || _cropRect.height <= 0) {
@@ -292,7 +256,10 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       final int x = _cropRect.left.toInt();
       final int y = _cropRect.top.toInt();
       final String timing = hasTrim ? "-ss ${_formatDuration(_trimStart)} -t ${_formatDuration(duration)}" : "";
-      cmd = "$timing -i '${widget.videoPath}' -vf \"crop=$w:$h:$x:$y\" -c:v libx264 -preset medium -crf 23 -c:a copy -movflags +faststart '$outputPath'".trim();
+      final String audioPart = wantMute ? "-an" : "-c:a copy";
+      final String preset = preview ? "ultrafast" : "medium";
+      final String crf = preview ? "28" : "23";
+      cmd = "$timing -i '${widget.videoPath}' -vf \"crop=$w:$h:$x:$y\" -c:v libx264 -preset $preset -crf $crf $audioPart -movflags +faststart '$outputPath'".trim();
     }
 
     try {
@@ -300,7 +267,16 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       final rc = await session.getReturnCode();
       if (ReturnCode.isSuccess(rc)) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('视频处理成功：$outputPath')));
+          if (preview) {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('预览已生成')));
+            // 打开预览播放页
+            // ignore: use_build_context_synchronously
+            Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => PreviewPlayerScreen(videoPath: outputPath)),
+            );
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('视频处理成功：$outputPath')));
+          }
         }
       } else {
         if (mounted) {
@@ -338,6 +314,15 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.pop(context),
         ),
+        actions: [
+          ToolIconButton(
+            icon: Icons.file_upload,
+            onPressed: _isProcessing ? null : () => _processVideoCombined(preview: false),
+            active: false,
+            tooltip: '导出',
+          ),
+          const SizedBox(width: 4),
+        ],
       ),
       body: _videoPlayerController == null || !_videoPlayerController!.value.isInitialized
           ? const Center(child: CircularProgressIndicator())
@@ -376,20 +361,124 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
                             _trimStart = Duration(milliseconds: values.start.toInt());
                             _trimEnd = Duration(milliseconds: values.end.toInt());
                           });
-                          // 不自动 seek 播放，保持用户手动控制
+                          _videoPlayerController!.seekTo(_trimStart);
                         },
                       ),
-                      Text('裁剪范围: ${_formatDuration(_trimStart)} - ${_formatDuration(_trimEnd)}'),
+                      const SizedBox(height: 8),
+                      // 比例按钮：显示在工具栏上方，仅在开启裁剪时出现
+                      if (_cropEnabled)
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            ToolIconButton(
+                              icon: Icons.fullscreen,
+                              onPressed: () => setState(() { _cropRect = Rect.fromLTWH(0, 0, _videoWidth, _videoHeight); }),
+                              tooltip: '重置',
+                            ),
+                            const SizedBox(width: 8),
+                            ToolIconButton(
+                              icon: Icons.crop_square,
+                              onPressed: () {
+                                setState(() {
+                                  final double size = _videoWidth < _videoHeight ? _videoWidth : _videoHeight;
+                                  final double x = (_videoWidth - size) / 2;
+                                  final double y = (_videoHeight - size) / 2;
+                                  _cropRect = Rect.fromLTWH(x, y, size, size);
+                                });
+                              },
+                              tooltip: '1:1',
+                            ),
+                            const SizedBox(width: 8),
+                            ToolIconButton(
+                              icon: Icons.crop_16_9,
+                              onPressed: () {
+                                setState(() {
+                                  const double targetRatio = 16.0 / 9.0;
+                                  double width, height;
+                                  if (_videoWidth / _videoHeight > targetRatio) {
+                                    height = _videoHeight; width = height * targetRatio;
+                                  } else { width = _videoWidth; height = width / targetRatio; }
+                                  final double x = (_videoWidth - width) / 2;
+                                  final double y = (_videoHeight - height) / 2;
+                                  _cropRect = Rect.fromLTWH(x, y, width, height);
+                                });
+                              },
+                              tooltip: '16:9',
+                            ),
+                            const SizedBox(width: 8),
+                            ToolIconButton(
+                              icon: Icons.aspect_ratio,
+                              onPressed: () {
+                                setState(() {
+                                  const double targetRatio = 3.0 / 4.0; // 竖屏 3:4
+                                  double width, height;
+                                  if (_videoWidth / _videoHeight > targetRatio) {
+                                    height = _videoHeight; width = height * targetRatio;
+                                  } else { width = _videoWidth; height = width / targetRatio; }
+                                  final double x = (_videoWidth - width) / 2;
+                                  final double y = (_videoHeight - height) / 2;
+                                  _cropRect = Rect.fromLTWH(x, y, width, height);
+                                });
+                              },
+                              tooltip: '3:4',
+                            ),
+                            const SizedBox(width: 8),
+                            ToolIconButton(
+                              icon: Icons.aspect_ratio,
+                              onPressed: () {
+                                setState(() {
+                                  const double targetRatio = 4.0 / 3.0; // 横屏 4:3
+                                  double width, height;
+                                  if (_videoWidth / _videoHeight > targetRatio) {
+                                    height = _videoHeight; width = height * targetRatio;
+                                  } else { width = _videoWidth; height = width / targetRatio; }
+                                  final double x = (_videoWidth - width) / 2;
+                                  final double y = (_videoHeight - height) / 2;
+                                  _cropRect = Rect.fromLTWH(x, y, width, height);
+                                });
+                              },
+                              tooltip: '4:3',
+                            ),
+                          ],
+                        ),
                     ],
                   ),
                 ),
-                const SizedBox(height: 8),
-                // 底部：确认导出按钮
+                // 工具栏：位于时间轴下方（均为图标，无底色圆角）
                 Padding(
-                  padding: const EdgeInsets.only(bottom: 12.0),
-                  child: ElevatedButton(
-                    onPressed: _isProcessing ? null : _processVideoCombined,
-                    child: _isProcessing ? const CircularProgressIndicator() : const Text('导出'),
+                  padding: const EdgeInsets.only(bottom: 10.0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      ToolIconButton(
+                        icon: _videoPlayerController!.value.isPlaying ? Icons.pause : Icons.play_arrow,
+                        onPressed: _togglePreviewPlayback,
+                        active: _videoPlayerController!.value.isPlaying,
+                        tooltip: '播放/暂停',
+                      ),
+                      const SizedBox(width: 8),
+                      ToolIconButton(
+                        icon: Icons.crop,
+                        onPressed: () => setState(() => _cropEnabled = !_cropEnabled),
+                        active: _cropEnabled,
+                        tooltip: '画布裁剪',
+                      ),
+                      
+                      const SizedBox(width: 8),
+                      ToolIconButton(
+                        icon: _muteEnabled ? Icons.volume_off : Icons.volume_up,
+                        onPressed: () => setState(() => _muteEnabled = !_muteEnabled),
+                        active: _muteEnabled,
+                        tooltip: '静音',
+                      ),
+                      const SizedBox(width: 8),
+                      ToolIconButton(
+                        icon: Icons.preview,
+                        onPressed: _isProcessing ? null : () => _processVideoCombined(preview: true),
+                        active: false,
+                        tooltip: '生成预览',
+                      ),
+                    ],
                   ),
                 ),
               ],
