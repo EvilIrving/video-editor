@@ -9,7 +9,6 @@ import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 
 import '../widgets/crop_box_overlay.dart';
-import '../widgets/tool_icon_button.dart';
 import 'preview_player_screen.dart';
 
 class VideoEditorScreen extends StatefulWidget {
@@ -37,6 +36,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   bool _isProcessing = false;
   bool _cropEnabled = false;   // 画布裁剪开关
   bool _muteEnabled = false;   // 静音导出
+  bool _showRatioButtons = false; // 控制比例按钮展开状态
 
   @override
   void initState() {
@@ -75,7 +75,13 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   }
 
   // ---- 视频播放监听器 ----
-  void _onVideoPlayerUpdate() {}
+  void _onVideoPlayerUpdate() {
+    if (mounted) {
+      setState(() {
+        // 触发UI更新，让播放按钮图标能够切换
+      });
+    }
+  }
 
   // ---- 预览播放控制 ----
   Future<void> _togglePreviewPlayback() async {
@@ -204,12 +210,171 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
                   );
                 },
               ),
-              // 移除中心控制条（工具统一到时间轴下方）
+              // 悬浮比例按钮 - 仅在画布裁剪模式下显示
+              if (_cropEnabled)
+                Positioned(
+                  bottom: 20,
+                  right: 20,
+                  child: _buildFloatingRatioButtons(),
+                ),
             ],
           ),
         ),
       ],
     );
+  }
+
+  // ---- 悬浮比例按钮 ----
+  Widget _buildFloatingRatioButtons() {
+    return SizedBox(
+      width: 60,
+      height: _showRatioButtons ? 300 : 60, // 展开时增加高度
+      child: Stack(
+        clipBehavior: Clip.none, // 允许子组件超出边界
+        alignment: Alignment.bottomCenter,
+        children: [
+          // 1:1 按钮
+          if (_showRatioButtons)
+            Positioned(
+              bottom: 70,
+              child: _buildRatioButton(
+                '1:1',
+                Icons.crop_square,
+                () => _setCropRatio(1.0),
+              ),
+            ),
+          // 4:3 按钮
+          if (_showRatioButtons)
+            Positioned(
+              bottom: 125,
+              child: _buildRatioButton(
+                '4:3',
+                Icons.crop_3_2,
+                () => _setCropRatio(4.0 / 3.0),
+              ),
+            ),
+          // 16:9 按钮
+          if (_showRatioButtons)
+            Positioned(
+              bottom: 180,
+              child: _buildRatioButton(
+                '16:9',
+                Icons.crop_16_9,
+                () => _setCropRatio(16.0 / 9.0),
+              ),
+            ),
+          // 3:4 按钮（竖屏）
+          if (_showRatioButtons)
+            Positioned(
+              bottom: 235,
+              child: _buildRatioButton(
+                '3:4',
+                Icons.crop_portrait,
+                () => _setCropRatio(3.0 / 4.0),
+              ),
+            ),
+          // 主按钮
+          Positioned(
+            bottom: 0,
+            child: FloatingActionButton(
+              heroTag: 'ratioMainBtn',
+              mini: true,
+              backgroundColor: _showRatioButtons ? Colors.yellow[600] : Colors.black.withOpacity(0.8),
+              elevation: 6,
+              onPressed: () {
+                setState(() {
+                  _showRatioButtons = !_showRatioButtons;
+                });
+              },
+              child: Icon(
+                _showRatioButtons ? Icons.close : Icons.aspect_ratio,
+                color: _showRatioButtons ? Colors.black : Colors.white,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRatioButton(String label, IconData icon, VoidCallback onPressed) {
+    return Container(
+      width: 50,
+      height: 50,
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.9),
+        borderRadius: BorderRadius.circular(25),
+        border: Border.all(color: Colors.yellow.withOpacity(0.5), width: 1),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.3),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(25),
+          onTap: () {
+            onPressed();
+            setState(() {
+              _showRatioButtons = false; // 选择后收起
+            });
+          },
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, color: Colors.white, size: 18),
+              const SizedBox(height: 2),
+              Text(
+                label,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // 设置裁剪比例的辅助方法
+  void _setCropRatio(double ratio) {
+    setState(() {
+      double width, height;
+      if (ratio == 1.0) {
+        // 1:1 正方形
+        final double size = _videoWidth < _videoHeight ? _videoWidth : _videoHeight;
+        width = height = size;
+      } else if (ratio > 1.0) {
+        // 横屏比例
+        if (_videoWidth / _videoHeight > ratio) {
+          height = _videoHeight;
+          width = height * ratio;
+        } else {
+          width = _videoWidth;
+          height = width / ratio;
+        }
+      } else {
+        // 竖屏比例
+        if (_videoWidth / _videoHeight > ratio) {
+          height = _videoHeight;
+          width = height * ratio;
+        } else {
+          width = _videoWidth;
+          height = width / ratio;
+        }
+      }
+      
+      final double x = (_videoWidth - width) / 2;
+      final double y = (_videoHeight - height) / 2;
+      _cropRect = Rect.fromLTWH(x, y, width, height);
+    });
   }
 
   // ---- 处理视频 ----
@@ -296,6 +461,53 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     }
   }
 
+  // 构建工具按钮的辅助方法
+  Widget _buildToolButton({
+    required IconData icon,
+    required String label,
+    required bool isActive,
+    required VoidCallback? onPressed,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 48,
+          height: 48,
+          decoration: BoxDecoration(
+            color: isActive ? Colors.yellow[600] : Colors.grey[700],
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(
+              color: isActive ? Colors.yellow[600]! : Colors.grey[600]!,
+              width: 1,
+            ),
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(24),
+              onTap: onPressed,
+              child: Icon(
+                icon,
+                color: isActive ? Colors.black : Colors.white,
+                size: 24,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          label,
+          style: TextStyle(
+            color: isActive ? Colors.yellow[600] : Colors.grey[400],
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ],
+    );
+  }
+
   String _twoDigits(int n) => n.toString().padLeft(2, '0');
 
   String _formatDuration(Duration d) {
@@ -308,20 +520,48 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.black,
       appBar: AppBar(
-        title: const Text('视频裁剪'),
+        backgroundColor: Colors.black,
+        elevation: 0,
+        title: const Text(
+          '视频裁剪',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 18,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
           onPressed: () => Navigator.pop(context),
         ),
         actions: [
-          ToolIconButton(
-            icon: Icons.file_upload,
-            onPressed: _isProcessing ? null : () => _processVideoCombined(preview: false),
-            active: false,
-            tooltip: '导出',
+          Container(
+            margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+            decoration: BoxDecoration(
+              color: Colors.yellow[600],
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: TextButton.icon(
+              onPressed: _isProcessing ? null : () => _processVideoCombined(preview: false),
+              icon: const Icon(Icons.file_upload, color: Colors.black, size: 18),
+              label: const Text(
+                '导出',
+                style: TextStyle(
+                  color: Colors.black,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 14,
+                ),
+              ),
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
           ),
-          const SizedBox(width: 4),
+          const SizedBox(width: 8),
         ],
       ),
       body: _videoPlayerController == null || !_videoPlayerController!.value.isInitialized
@@ -344,139 +584,110 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
                           itemBuilder: (context, index) {
                             return Padding(
                               padding: const EdgeInsets.symmetric(horizontal: 2.0),
-                              child: Image.file(File(_thumbnailPaths[index]), fit: BoxFit.cover),
+                              child: Container(
+                                width: 80, // 1:1 正方形容器
+                                height: 80,
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                    color: Colors.grey.withOpacity(0.3),
+                                    width: 1,
+                                  ),
+                                ),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(7),
+                                  child: Image.file(
+                                    File(_thumbnailPaths[index]), 
+                                    fit: BoxFit.cover, // 保持居中裁剪
+                                  ),
+                                ),
+                              ),
                             );
                           },
                         ),
                       ),
-                      RangeSlider(
-                        values: RangeValues(
-                          _trimStart.inMilliseconds.toDouble(),
-                          _trimEnd.inMilliseconds.toDouble(),
+                      SliderTheme(
+                        data: SliderTheme.of(context).copyWith(
+                          trackHeight: 4,
+                          activeTrackColor: Colors.yellow[600],
+                          inactiveTrackColor: Colors.grey[300],
+                          thumbColor: Colors.yellow[700],
+                          overlayColor: Colors.yellow[600]!.withAlpha(32),
+                          thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
+                          overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
+                          rangeThumbShape: const RoundRangeSliderThumbShape(enabledThumbRadius: 8),
+                          rangeTrackShape: const RoundedRectRangeSliderTrackShape(),
                         ),
-                        min: 0,
-                        max: _videoPlayerController!.value.duration.inMilliseconds.toDouble(),
-                        onChanged: (RangeValues values) {
-                          setState(() {
-                            _trimStart = Duration(milliseconds: values.start.toInt());
-                            _trimEnd = Duration(milliseconds: values.end.toInt());
-                          });
-                          _videoPlayerController!.seekTo(_trimStart);
-                        },
+                        child: RangeSlider(
+                          values: RangeValues(
+                            _trimStart.inMilliseconds.toDouble(),
+                            _trimEnd.inMilliseconds.toDouble(),
+                          ),
+                          min: 0,
+                          max: _videoPlayerController!.value.duration.inMilliseconds.toDouble(),
+                          onChanged: (RangeValues values) {
+                            setState(() {
+                              _trimStart = Duration(milliseconds: values.start.toInt());
+                              _trimEnd = Duration(milliseconds: values.end.toInt());
+                            });
+                            _videoPlayerController!.seekTo(_trimStart);
+                          },
+                        ),
                       ),
                       const SizedBox(height: 8),
-                      // 比例按钮：显示在工具栏上方，仅在开启裁剪时出现
-                      if (_cropEnabled)
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            ToolIconButton(
-                              icon: Icons.fullscreen,
-                              onPressed: () => setState(() { _cropRect = Rect.fromLTWH(0, 0, _videoWidth, _videoHeight); }),
-                              tooltip: '重置',
-                            ),
-                            const SizedBox(width: 8),
-                            ToolIconButton(
-                              icon: Icons.crop_square,
-                              onPressed: () {
-                                setState(() {
-                                  final double size = _videoWidth < _videoHeight ? _videoWidth : _videoHeight;
-                                  final double x = (_videoWidth - size) / 2;
-                                  final double y = (_videoHeight - size) / 2;
-                                  _cropRect = Rect.fromLTWH(x, y, size, size);
-                                });
-                              },
-                              tooltip: '1:1',
-                            ),
-                            const SizedBox(width: 8),
-                            ToolIconButton(
-                              icon: Icons.crop_16_9,
-                              onPressed: () {
-                                setState(() {
-                                  const double targetRatio = 16.0 / 9.0;
-                                  double width, height;
-                                  if (_videoWidth / _videoHeight > targetRatio) {
-                                    height = _videoHeight; width = height * targetRatio;
-                                  } else { width = _videoWidth; height = width / targetRatio; }
-                                  final double x = (_videoWidth - width) / 2;
-                                  final double y = (_videoHeight - height) / 2;
-                                  _cropRect = Rect.fromLTWH(x, y, width, height);
-                                });
-                              },
-                              tooltip: '16:9',
-                            ),
-                            const SizedBox(width: 8),
-                            ToolIconButton(
-                              icon: Icons.aspect_ratio,
-                              onPressed: () {
-                                setState(() {
-                                  const double targetRatio = 3.0 / 4.0; // 竖屏 3:4
-                                  double width, height;
-                                  if (_videoWidth / _videoHeight > targetRatio) {
-                                    height = _videoHeight; width = height * targetRatio;
-                                  } else { width = _videoWidth; height = width / targetRatio; }
-                                  final double x = (_videoWidth - width) / 2;
-                                  final double y = (_videoHeight - height) / 2;
-                                  _cropRect = Rect.fromLTWH(x, y, width, height);
-                                });
-                              },
-                              tooltip: '3:4',
-                            ),
-                            const SizedBox(width: 8),
-                            ToolIconButton(
-                              icon: Icons.aspect_ratio,
-                              onPressed: () {
-                                setState(() {
-                                  const double targetRatio = 4.0 / 3.0; // 横屏 4:3
-                                  double width, height;
-                                  if (_videoWidth / _videoHeight > targetRatio) {
-                                    height = _videoHeight; width = height * targetRatio;
-                                  } else { width = _videoWidth; height = width / targetRatio; }
-                                  final double x = (_videoWidth - width) / 2;
-                                  final double y = (_videoHeight - height) / 2;
-                                  _cropRect = Rect.fromLTWH(x, y, width, height);
-                                });
-                              },
-                              tooltip: '4:3',
-                            ),
-                          ],
+                      // 显示当前裁剪时长
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.7),
+                          borderRadius: BorderRadius.circular(20),
                         ),
+                        child: Text(
+                          '当前裁剪时长: ${_formatDuration(_trimEnd - _trimStart)}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
                     ],
                   ),
                 ),
-                // 工具栏：位于时间轴下方（均为图标，无底色圆角）
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 10.0),
+                // 工具栏：位于时间轴下方
+                Container(
+                  padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[900],
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                  ),
                   child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
-                      ToolIconButton(
+                      _buildToolButton(
                         icon: _videoPlayerController!.value.isPlaying ? Icons.pause : Icons.play_arrow,
+                        label: _videoPlayerController!.value.isPlaying ? '暂停' : '播放',
+                        isActive: _videoPlayerController!.value.isPlaying,
                         onPressed: _togglePreviewPlayback,
-                        active: _videoPlayerController!.value.isPlaying,
-                        tooltip: '播放/暂停',
                       ),
-                      const SizedBox(width: 8),
-                      ToolIconButton(
+                      _buildToolButton(
                         icon: Icons.crop,
+                        label: '裁剪',
+                        isActive: _cropEnabled,
                         onPressed: () => setState(() => _cropEnabled = !_cropEnabled),
-                        active: _cropEnabled,
-                        tooltip: '画布裁剪',
                       ),
-                      
-                      const SizedBox(width: 8),
-                      ToolIconButton(
+                      _buildToolButton(
                         icon: _muteEnabled ? Icons.volume_off : Icons.volume_up,
+                        label: _muteEnabled ? '静音' : '音频',
+                        isActive: _muteEnabled,
                         onPressed: () => setState(() => _muteEnabled = !_muteEnabled),
-                        active: _muteEnabled,
-                        tooltip: '静音',
                       ),
-                      const SizedBox(width: 8),
-                      ToolIconButton(
+                      _buildToolButton(
                         icon: Icons.preview,
+                        label: '预览',
+                        isActive: false,
                         onPressed: _isProcessing ? null : () => _processVideoCombined(preview: true),
-                        active: false,
-                        tooltip: '生成预览',
                       ),
                     ],
                   ),
