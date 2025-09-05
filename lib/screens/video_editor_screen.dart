@@ -34,13 +34,20 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   double _videoHeight = 0;
 
   bool _isProcessing = false;
+  bool _isGeneratingPreview = false; // 预览生成状态
   bool _cropEnabled = false;   // 画布裁剪开关
   bool _muteEnabled = false;   // 静音导出
+
+  // 视频信息
+  double _originalFrameRate = 30.0;
+  int _originalWidth = 1920;
+  int _originalHeight = 1080;
 
   @override
   void initState() {
     super.initState();
     _initializeVideoPlayer();
+    _detectVideoInfo();
   }
 
   @override
@@ -73,6 +80,34 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     await _generateThumbnails();
   }
 
+  // ---- 视频信息检测 ----
+  Future<void> _detectVideoInfo() async {
+    try {
+      final String cmd = "-i '${widget.videoPath}' -hide_banner";
+      final session = await FFmpegKit.execute(cmd);
+      final String? output = await session.getOutput();
+      
+      if (output != null) {
+        // 解析帧率
+        final RegExp fpsRegex = RegExp(r'(\d+\.?\d*)\s*fps');
+        final Match? fpsMatch = fpsRegex.firstMatch(output);
+        if (fpsMatch != null) {
+          _originalFrameRate = double.tryParse(fpsMatch.group(1) ?? '30') ?? 30.0;
+        }
+
+        // 解析分辨率
+        final RegExp resolutionRegex = RegExp(r'(\d+)x(\d+)');
+        final Match? resolutionMatch = resolutionRegex.firstMatch(output);
+        if (resolutionMatch != null) {
+          _originalWidth = int.tryParse(resolutionMatch.group(1) ?? '1920') ?? 1920;
+          _originalHeight = int.tryParse(resolutionMatch.group(2) ?? '1080') ?? 1080;
+        }
+      }
+    } catch (e) {
+      debugPrint('视频信息检测失败: $e');
+    }
+  }
+
   // ---- 视频播放监听器 ----
   void _onVideoPlayerUpdate() {
     if (mounted) {
@@ -96,8 +131,6 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     }
   }
 
-  // ---- 计算预览进度 ----
-  double _calculatePreviewProgress() { return 0.0; }
 
   // ---- 时间轴裁剪：缩略图生成 ----
   Future<void> _generateThumbnails() async {
@@ -333,7 +366,11 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   // ---- 处理视频 ----
   Future<void> _processVideoCombined({bool preview = false}) async {
     setState(() {
-      _isProcessing = true;
+      if (preview) {
+        _isGeneratingPreview = true;
+      } else {
+        _isProcessing = true;
+      }
     });
 
     final Directory dir = preview ? await getTemporaryDirectory() : await getApplicationDocumentsDirectory();
@@ -350,34 +387,90 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     );
     final bool wantMute = _muteEnabled;
 
-    if (!hasCrop && !wantMute) {
-      // 仅时间轴裁剪，直接复制所有流
+    // 预览模式优化参数
+    String previewOptimizations = "";
+    if (preview) {
+      // 帧率优化：如果原始帧率大于15，则降到15；否则保持原帧率
+      final double targetFrameRate = _originalFrameRate > 15.0 ? 15.0 : _originalFrameRate;
+      
+      // 分辨率优化：如果原始分辨率大于720p，则缩放到720p；否则保持原分辨率
+      String scaleFilter = "";
+      if (_originalWidth > 1280 || _originalHeight > 720) {
+        // 保持宽高比，限制最大边为720p
+        if (_originalWidth > _originalHeight) {
+          // 横屏视频，以宽为准
+          scaleFilter = "scale=1280:720:force_original_aspect_ratio=decrease";
+        } else {
+          // 竖屏视频，以高为准
+          scaleFilter = "scale=720:1280:force_original_aspect_ratio=decrease";
+        }
+      }
+      
+      // 组合滤镜
+      List<String> filters = [];
+      if (hasCrop) {
+        final int w = _cropRect.width.toInt();
+        final int h = _cropRect.height.toInt();
+        final int x = _cropRect.left.toInt();
+        final int y = _cropRect.top.toInt();
+        filters.add("crop=$w:$h:$x:$y");
+      }
+      if (scaleFilter.isNotEmpty) {
+        filters.add(scaleFilter);
+      }
+      filters.add("fps=$targetFrameRate");
+      
+      if (filters.isNotEmpty) {
+        previewOptimizations = "-vf \"${filters.join(',')}\"";
+      } else {
+        previewOptimizations = "-vf \"fps=$targetFrameRate\"";
+      }
+    }
+
+    if (!hasCrop && !wantMute && !preview) {
+      // 仅时间轴裁剪，直接复制所有流（非预览模式）
       final String timing = hasTrim ? "-ss ${_formatDuration(_trimStart)} -t ${_formatDuration(duration)}" : "";
       cmd = "$timing -i '${widget.videoPath}' -c copy '$outputPath'".trim();
-    } else if (!hasCrop && wantMute) {
-      // 仅静音 + 可叠加时间轴，视频流copy，去掉音频
+    } else if (!hasCrop && wantMute && !preview) {
+      // 仅静音 + 可叠加时间轴，视频流copy，去掉音频（非预览模式）
       final String timing = hasTrim ? "-ss ${_formatDuration(_trimStart)} -t ${_formatDuration(duration)}" : "";
       cmd = "$timing -i '${widget.videoPath}' -c:v copy -an '$outputPath'".trim();
     } else {
-      // 需要画布裁剪 -> 重新编码视频，音频拷贝；可叠加时间轴
-      if (_cropRect.width <= 0 || _cropRect.height <= 0) {
+      // 需要画布裁剪或预览模式 -> 重新编码视频
+      if (hasCrop && (_cropRect.width <= 0 || _cropRect.height <= 0)) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('裁剪区域无效')));
         }
         setState(() {
-          _isProcessing = false;
+          if (preview) {
+            _isGeneratingPreview = false;
+          } else {
+            _isProcessing = false;
+          }
         });
         return;
       }
-      final int w = _cropRect.width.toInt();
-      final int h = _cropRect.height.toInt();
-      final int x = _cropRect.left.toInt();
-      final int y = _cropRect.top.toInt();
+      
       final String timing = hasTrim ? "-ss ${_formatDuration(_trimStart)} -t ${_formatDuration(duration)}" : "";
       final String audioPart = wantMute ? "-an" : "-c:a copy";
       final String preset = preview ? "ultrafast" : "medium";
       final String crf = preview ? "28" : "23";
-      cmd = "$timing -i '${widget.videoPath}' -vf \"crop=$w:$h:$x:$y\" -c:v libx264 -preset $preset -crf $crf $audioPart -movflags +faststart '$outputPath'".trim();
+      
+      if (preview) {
+        // 预览模式使用优化后的滤镜
+        cmd = "$timing -i '${widget.videoPath}' $previewOptimizations -c:v libx264 -preset $preset -crf $crf $audioPart -movflags +faststart '$outputPath'".trim();
+      } else {
+        // 正式导出模式
+        if (hasCrop) {
+          final int w = _cropRect.width.toInt();
+          final int h = _cropRect.height.toInt();
+          final int x = _cropRect.left.toInt();
+          final int y = _cropRect.top.toInt();
+          cmd = "$timing -i '${widget.videoPath}' -vf \"crop=$w:$h:$x:$y\" -c:v libx264 -preset $preset -crf $crf $audioPart -movflags +faststart '$outputPath'".trim();
+        } else {
+          cmd = "$timing -i '${widget.videoPath}' -c:v libx264 -preset $preset -crf $crf $audioPart -movflags +faststart '$outputPath'".trim();
+        }
+      }
     }
 
     try {
@@ -408,7 +501,11 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     } finally {
       if (mounted) {
         setState(() {
-          _isProcessing = false;
+          if (preview) {
+            _isGeneratingPreview = false;
+          } else {
+            _isProcessing = false;
+          }
         });
       }
     }
@@ -636,10 +733,10 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
                           onPressed: () => setState(() => _muteEnabled = !_muteEnabled),
                         ),
                         _buildToolButton(
-                          icon: Icons.preview,
-                          label: '预览',
-                          isActive: false,
-                          onPressed: _isProcessing ? null : () => _processVideoCombined(preview: true),
+                          icon: _isGeneratingPreview ? Icons.hourglass_empty : Icons.preview,
+                          label: _isGeneratingPreview ? '生成中' : '预览',
+                          isActive: _isGeneratingPreview,
+                          onPressed: (_isProcessing || _isGeneratingPreview) ? null : () => _processVideoCombined(preview: true),
                         ),
                       ],
                     ),

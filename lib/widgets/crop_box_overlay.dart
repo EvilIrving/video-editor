@@ -19,6 +19,8 @@ class CropBoxOverlay extends StatefulWidget {
 class _CropBoxOverlayState extends State<CropBoxOverlay> {
   static const double _handleSize = 20.0;  // 更小的手柄尺寸，适配手机端
   static const double _minSize = 40.0;     // 更小的最小裁剪框尺寸
+  static const double _safeMargin = 12.0;  // 手柄距离屏幕边缘的安全距离
+  static const double _touchPadding = 8.0; // 扩大触摸区域的额外空间
 
   Rect _current = Rect.zero;
   Offset _startDrag = Offset.zero;
@@ -80,24 +82,32 @@ class _CropBoxOverlayState extends State<CropBoxOverlay> {
         onPanUpdate: _onHandlePanUpdate,
         onPanEnd: _onHandlePanEnd,
         child: Container(
-          width: _handleSize,
-          height: _handleSize,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            border: Border.all(color: Colors.blue, width: 2.0),
-            borderRadius: BorderRadius.circular(4.0),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.3),
-                blurRadius: 4.0,
-                offset: const Offset(0, 2),
+          // 扩大触摸区域
+          width: _handleSize + _touchPadding * 2,
+          height: _handleSize + _touchPadding * 2,
+          color: Colors.transparent, // 透明的触摸区域
+          child: Center(
+            child: Container(
+              width: _handleSize,
+              height: _handleSize,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                border: Border.all(color: Colors.blue, width: 2.0),
+                borderRadius: BorderRadius.circular(4.0),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.3),
+                    blurRadius: 4.0,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
               ),
-            ],
-          ),
-          child: Icon(
-            _getCornerIcon(mode),
-            size: 16.0,
-            color: Colors.blue,
+              child: Icon(
+                _getCornerIcon(mode),
+                size: 16.0,
+                color: Colors.blue,
+              ),
+            ),
           ),
         ),
       ),
