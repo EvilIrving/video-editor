@@ -74,6 +74,8 @@ class _CropBoxOverlayState extends State<CropBoxOverlay> {
   }
 
   Widget _buildCornerHandle(_DragMode mode, Alignment alignment) {
+    final bool isHandleInside = _isHandleInside(alignment);
+    
     return Positioned(
       left: _getHandleLeft(alignment),
       top: _getHandleTop(alignment),
@@ -92,7 +94,10 @@ class _CropBoxOverlayState extends State<CropBoxOverlay> {
               height: _handleSize,
               decoration: BoxDecoration(
                 color: Colors.white,
-                border: Border.all(color: Colors.blue, width: 2.0),
+                border: Border.all(
+                  color: isHandleInside ? Colors.orange : Colors.blue, 
+                  width: 2.0
+                ),
                 borderRadius: BorderRadius.circular(4.0),
                 boxShadow: [
                   BoxShadow(
@@ -105,7 +110,7 @@ class _CropBoxOverlayState extends State<CropBoxOverlay> {
               child: Icon(
                 _getCornerIcon(mode),
                 size: 16.0,
-                color: Colors.blue,
+                color: isHandleInside ? Colors.orange : Colors.blue,
               ),
             ),
           ),
@@ -115,6 +120,8 @@ class _CropBoxOverlayState extends State<CropBoxOverlay> {
   }
 
   Widget _buildEdgeHandle(_DragMode mode, Alignment alignment) {
+    final bool isHandleInside = _isHandleInside(alignment);
+    
     return Positioned(
       left: _getHandleLeft(alignment),
       top: _getHandleTop(alignment),
@@ -123,24 +130,35 @@ class _CropBoxOverlayState extends State<CropBoxOverlay> {
         onPanUpdate: _onHandlePanUpdate,
         onPanEnd: _onHandlePanEnd,
         child: Container(
-          width: _handleSize,
-          height: _handleSize,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            border: Border.all(color: Colors.blue, width: 2.0),
-            shape: BoxShape.circle,
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.3),
-                blurRadius: 4.0,
-                offset: const Offset(0, 2),
+          // 扩大触摸区域
+          width: _handleSize + _touchPadding * 2,
+          height: _handleSize + _touchPadding * 2,
+          color: Colors.transparent, // 透明的触摸区域
+          child: Center(
+            child: Container(
+              width: _handleSize,
+              height: _handleSize,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                border: Border.all(
+                  color: isHandleInside ? Colors.orange : Colors.blue, 
+                  width: 2.0
+                ),
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.3),
+                    blurRadius: 4.0,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
               ),
-            ],
-          ),
-          child: Icon(
-            _getEdgeIcon(mode),
-            size: 16.0,
-            color: Colors.blue,
+              child: Icon(
+                _getEdgeIcon(mode),
+                size: 16.0,
+                color: isHandleInside ? Colors.orange : Colors.blue,
+              ),
+            ),
           ),
         ),
       ),
@@ -148,36 +166,82 @@ class _CropBoxOverlayState extends State<CropBoxOverlay> {
   }
 
   double _getHandleLeft(Alignment alignment) {
+    final double expandedHandleSize = _handleSize + _touchPadding * 2;
+    
     switch (alignment) {
       case Alignment.topLeft:
       case Alignment.centerLeft:
       case Alignment.bottomLeft:
-        return _current.left - _handleSize / 2;
+        // 左侧手柄：智能定位策略
+        final double idealLeft = _current.left - expandedHandleSize / 2;
+        
+        // 如果裁剪框太靠近左边缘，将手柄放在裁剪框内部
+        if (_current.left < _safeMargin + expandedHandleSize / 2) {
+          return _current.left + _touchPadding; // 放在裁剪框内部
+        }
+        
+        // 否则正常放在外部，但确保不超出安全边距
+        return idealLeft.clamp(_safeMargin, widget.videoSize.width - expandedHandleSize);
+        
       case Alignment.topCenter:
       case Alignment.bottomCenter:
-        return _current.left + _current.width / 2 - _handleSize / 2;
+        return _current.left + _current.width / 2 - expandedHandleSize / 2;
+        
       case Alignment.topRight:
       case Alignment.centerRight:
       case Alignment.bottomRight:
-        return _current.right - _handleSize / 2;
+        // 右侧手柄：智能定位策略
+        final double idealLeft = _current.right - expandedHandleSize / 2;
+        
+        // 如果裁剪框太靠近右边缘，将手柄放在裁剪框内部
+        if (_current.right > widget.videoSize.width - _safeMargin - expandedHandleSize / 2) {
+          return _current.right - expandedHandleSize - _touchPadding; // 放在裁剪框内部
+        }
+        
+        // 否则正常放在外部，但确保不超出安全边距
+        return idealLeft.clamp(0, widget.videoSize.width - _safeMargin - expandedHandleSize);
+        
       default:
         return 0;
     }
   }
 
   double _getHandleTop(Alignment alignment) {
+    final double expandedHandleSize = _handleSize + _touchPadding * 2;
+    
     switch (alignment) {
       case Alignment.topLeft:
       case Alignment.topCenter:
       case Alignment.topRight:
-        return _current.top - _handleSize / 2;
+        // 顶部手柄：智能定位策略
+        final double idealTop = _current.top - expandedHandleSize / 2;
+        
+        // 如果裁剪框太靠近顶部边缘，将手柄放在裁剪框内部
+        if (_current.top < _safeMargin + expandedHandleSize / 2) {
+          return _current.top + _touchPadding; // 放在裁剪框内部
+        }
+        
+        // 否则正常放在外部，但确保不超出安全边距
+        return idealTop.clamp(_safeMargin, widget.videoSize.height - expandedHandleSize);
+        
       case Alignment.centerLeft:
       case Alignment.centerRight:
-        return _current.top + _current.height / 2 - _handleSize / 2;
+        return _current.top + _current.height / 2 - expandedHandleSize / 2;
+        
       case Alignment.bottomLeft:
       case Alignment.bottomCenter:
       case Alignment.bottomRight:
-        return _current.bottom - _handleSize / 2;
+        // 底部手柄：智能定位策略
+        final double idealTop = _current.bottom - expandedHandleSize / 2;
+        
+        // 如果裁剪框太靠近底部边缘，将手柄放在裁剪框内部
+        if (_current.bottom > widget.videoSize.height - _safeMargin - expandedHandleSize / 2) {
+          return _current.bottom - expandedHandleSize - _touchPadding; // 放在裁剪框内部
+        }
+        
+        // 否则正常放在外部，但确保不超出安全边距
+        return idealTop.clamp(0, widget.videoSize.height - _safeMargin - expandedHandleSize);
+        
       default:
         return 0;
     }
@@ -210,6 +274,36 @@ class _CropBoxOverlayState extends State<CropBoxOverlay> {
         return Icons.east;
       default:
         return Icons.crop_free;
+    }
+  }
+
+  // 判断手柄是否被放置在裁剪框内部（智能定位时）
+  bool _isHandleInside(Alignment alignment) {
+    final double expandedHandleSize = _handleSize + _touchPadding * 2;
+    
+    switch (alignment) {
+      case Alignment.topLeft:
+        return _current.left < _safeMargin + expandedHandleSize / 2 ||
+               _current.top < _safeMargin + expandedHandleSize / 2;
+      case Alignment.topCenter:
+        return _current.top < _safeMargin + expandedHandleSize / 2;
+      case Alignment.topRight:
+        return _current.right > widget.videoSize.width - _safeMargin - expandedHandleSize / 2 ||
+               _current.top < _safeMargin + expandedHandleSize / 2;
+      case Alignment.centerLeft:
+        return _current.left < _safeMargin + expandedHandleSize / 2;
+      case Alignment.centerRight:
+        return _current.right > widget.videoSize.width - _safeMargin - expandedHandleSize / 2;
+      case Alignment.bottomLeft:
+        return _current.left < _safeMargin + expandedHandleSize / 2 ||
+               _current.bottom > widget.videoSize.height - _safeMargin - expandedHandleSize / 2;
+      case Alignment.bottomCenter:
+        return _current.bottom > widget.videoSize.height - _safeMargin - expandedHandleSize / 2;
+      case Alignment.bottomRight:
+        return _current.right > widget.videoSize.width - _safeMargin - expandedHandleSize / 2 ||
+               _current.bottom > widget.videoSize.height - _safeMargin - expandedHandleSize / 2;
+      default:
+        return false;
     }
   }
 
