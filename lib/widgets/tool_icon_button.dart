@@ -22,12 +22,20 @@ class ToolIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Widget btn = IconButton(
-      onPressed: onPressed,
-      icon: Icon(icon),
-      iconSize: size,
-      color: active ? activeColor : color,
-      splashRadius: size,
+    final Widget btn = Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(size / 2),
+        child: Padding(
+          padding: EdgeInsets.all(size / 4),
+          child: Icon(
+            icon,
+            size: size,
+            color: active ? activeColor : color,
+          ),
+        ),
+      ),
     );
 
     if (tooltip != null && tooltip!.isNotEmpty) {
