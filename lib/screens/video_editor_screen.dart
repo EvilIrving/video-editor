@@ -9,6 +9,7 @@ import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 
 import '../widgets/crop_box_overlay.dart';
+import '../widgets/loading_button.dart';
 import 'preview_player_screen.dart';
 
 class VideoEditorScreen extends StatefulWidget {
@@ -578,28 +579,19 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           onPressed: () => Navigator.pop(context),
         ),
         actions: [
-          TextButton.icon(
-            onPressed: _isProcessing ? null : () => _processVideoCombined(preview: false),
-            icon: Icon(
-              Icons.file_upload, 
-              color: Colors.yellow[600], 
-              size: 18
+          LoadingTextButton(
+            text: '导出',
+            onPressed: () => _processVideoCombined(preview: false),
+            isLoading: _isProcessing,
+            icon: Icons.file_upload,
+            foregroundColor: Colors.yellow[600],
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            textStyle: TextStyle(
+              color: Colors.yellow[600],
+              fontWeight: FontWeight.w600,
+              fontSize: 14,
             ),
-            label: Text(
-              '导出',
-              style: TextStyle(
-                color: Colors.yellow[600],
-                fontWeight: FontWeight.w600,
-                fontSize: 14,
-              ),
-            ),
-            style: TextButton.styleFrom(
-              backgroundColor: Colors.transparent,
-              foregroundColor: Colors.yellow[600],
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              minimumSize: Size.zero,
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
+            iconSize: 18,
           ),
           const SizedBox(width: 8),
         ],
@@ -732,11 +724,14 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
                           isActive: _muteEnabled,
                           onPressed: () => setState(() => _muteEnabled = !_muteEnabled),
                         ),
-                        _buildToolButton(
-                          icon: _isGeneratingPreview ? Icons.hourglass_empty : Icons.preview,
-                          label: _isGeneratingPreview ? '生成中' : '预览',
+                        LoadingToolButton(
+                          icon: Icons.preview,
+                          label: '预览',
+                          isLoading: _isGeneratingPreview,
                           isActive: _isGeneratingPreview,
                           onPressed: (_isProcessing || _isGeneratingPreview) ? null : () => _processVideoCombined(preview: true),
+                          activeColor: Colors.yellow[600],
+                          inactiveColor: Colors.grey[400],
                         ),
                       ],
                     ),
